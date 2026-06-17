@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票均線分析工具 (免休眠版)</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 10px; }
+        input, button { padding: 8px; font-size: 16px; margin-right: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+        th { background-color: #f4f4f4; }
+        .buy { color: red; font-weight: bold; }
+        .sell { color: green; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h2>股票 5MA / 20MA 均線交叉查詢</h2>
+    <p>請輸入股票代號（多個代號請用空格或逗號隔開，例如：<code>2330 2454</code>）：</p>
+    
+    <input type="text" id="symbolsInput" placeholder="例如: 2330, 2454" style="width: 60%;">
+    <button onclick="queryStocks()">開始查詢</button>
+
+    <table>
+        <thead>
+            <tr>
+                <th>股票代號</th>
+                <th>目前股價</th>
+                <th>今日 5MA</th>
+                <th>昨日 5MA</th>
+                <th>今日 20MA</th>
+                <th>昨日 20MA</th>
+                <th>訊號</th>
+                <th>狀態</th>
+            </tr>
+        </thead>
+        <tbody id="resultsBody">
+            <tr><td colspan="8">請輸入代號並點擊查詢</td></tr>
+        </tbody>
+    </table>
+
+    <script>
+        async function fetchStockData(symbol) {
+            // 自動幫台灣股票補上 .TW
+            if (!symbol.includes('.')) {
+                symbol = symbol + '.TW';
+            }
+            
+            // 使用公開的 Yahoo Finance 鏡像/跨域代理 API 獲取 90 天歷史數據
+            const url = `https://yahoo.com{symbol}?range=90d&interval=1d`;
+            
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("無此股票或資料抓取失敗");
+            
+            const json = await response.json();
+            const result = json.chart.result[0];
+            const quotes = result.indicators.quote[0].close;
+            
+            // 過濾掉 null 的交易日數據
+            return quotes.filter(p => p !== null && p !== undefined);
+        }
+
+        function calculateMA(data, period) {
+            let ma = [];
+            for (let i = 0; i < data.length; i++) {
+                if (i < period - 1) {
+                    ma.push(null);
+                } else {
+                    let sum = 0;
+                    for (let j = 0; j < period; j++) {
+                        sum += data[i - j];
+                    }
+                    ma.push(sum / period);
+                }
+            }
+            return ma;
+        }
+
+        async function queryStocks() {
+            const input = document.getElementById("symbolsInput").value;
+            const symbols = input.replace(/,/g, " ").split(/\s+/).filter(s => s.trim() !== "");
+            const tbody = document.getElementById("resultsBody");
+            
+            if (symbols.length === 0) return;
+            tbody.innerHTML = '<tr><td colspan="8">查詢中，請稍候...</td></tr>';
+            
+            let html = "";
+
+            for (let symbol of symbols) {
+                try {
+                    const closePrices = await fetchStockData(symbol);
+                    if (closePrices.length < 25) {
+                        html += `<tr><td>${symbol}</td><td colspan="7">資料不足 (小於25天)</td></tr>`;
+                        continue;
+                    }
+
+                    const ma5 = calculateMA(closePrices, 5);
+                    const ma20 = calculateMA(closePrices, 20);
+
+                    const len = closePrices.length;
+                    const currentPrice = closePrices[len - 1].toFixed(2);
+
+                    const today_ma5 = ma5[len - 1];
+                    const yesterday_ma5 = ma5[len - 2];
+                    const today_ma20 = ma20[len - 1];
+                    const yesterday_ma20 = ma20[len - 2];
+
+                    // 判斷黃金交叉與死亡交叉訊號
+                    let signal = "-";
+                    if (yesterday_ma5 <= yesterday_ma20 && today_ma5 > today_ma20) {
+                        signal = '<span class="buy">BUY (黃金交叉)</span>';
+                    } else if (yesterday_ma5 >= yesterday_ma20 && today_ma5 < today_ma20) {
+                        signal = '<span class="sell">SELL (死亡交叉)</span>';
+                    }
+
+                    // 判斷最近 6 天內是否有交叉 (Alert)
+                    let alert = "-";
+                    for (let i = 1; i <= 6; i++) {
+                        let idx = len - i;
+                        if ((ma5[idx] > ma20[idx] && ma5[idx-1] <= ma20[idx-1]) || 
+                            (ma5[idx] < ma20[idx] && ma5[idx-1] >= ma20[idx-1])) {
+                            alert = "近期有交會";
+                            break;
+                        }
+                    }
+
+                    html += `
+                        <tr>
+                            <td><strong>${symbol.toUpperCase()}</strong></td>
+                            <td>${currentPrice}</td>
+                            <td>${today_ma5.toFixed(2)}</td>
+                            <td>${yesterday_ma5.toFixed(2)}</td>
+                            <td>${today_ma20.toFixed(2)}</td>
+                            <td>${yesterday_ma20.toFixed(2)}</td>
+                            <td>${signal}</td>
+                            <td>${alert}</td>
+                        </tr>
+                    `;
+                } catch (error) {
+                    html += `<tr><td>${symbol}</td><td colspan="7" style="color:red;">錯誤: ${error.message}</td></tr>`;
+                }
+            }
+            tbody.innerHTML = html;
+        }
+    </script>
+</body>
+</html>
