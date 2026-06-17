@@ -42,18 +42,22 @@
 
     <script>
         async function fetchStockData(symbol) {
-            // 自動幫台灣股票補上 .TW
-            if (!symbol.includes('.')) {
+            // 美股保持原樣，台股純數字則補上 .TW
+            if (/^\d+$/.test(symbol)) {
                 symbol = symbol + '.TW';
             }
             
-            // 使用公開的 Yahoo Finance 鏡像/跨域代理 API 獲取 90 天歷史數據
-            const url = `https://yahoo.com{symbol}?range=90d&interval=1d`;
+            // 【修正】使用開源 CORS 代理，繞過 Yahoo Finance 的瀏覽器跨域限制
+            const proxy = "https://corsproxy.io?";
+            const targetUrl = `https://yahoo.com{symbol}?range=90d&interval=1d`;
+            const url = proxy + encodeURIComponent(targetUrl);
             
             const response = await fetch(url);
             if (!response.ok) throw new Error("無此股票或資料抓取失敗");
             
             const json = await response.json();
+            if (!json.chart || !json.chart.result) throw new Error("找不到股票數據");
+            
             const result = json.chart.result[0];
             const quotes = result.indicators.quote[0].close;
             
@@ -79,6 +83,7 @@
 
         async function queryStocks() {
             const input = document.getElementById("symbolsInput").value;
+            // 修正正規表示式，精準分割空白與逗號
             const symbols = input.replace(/,/g, " ").split(/\s+/).filter(s => s.trim() !== "");
             const tbody = document.getElementById("resultsBody");
             
@@ -106,7 +111,6 @@
                     const today_ma20 = ma20[len - 1];
                     const yesterday_ma20 = ma20[len - 2];
 
-                    // 判斷黃金交叉與死亡交叉訊號
                     let signal = "-";
                     if (yesterday_ma5 <= yesterday_ma20 && today_ma5 > today_ma20) {
                         signal = '<span class="buy">BUY (黃金交叉)</span>';
@@ -114,10 +118,10 @@
                         signal = '<span class="sell">SELL (死亡交叉)</span>';
                     }
 
-                    // 判斷最近 6 天內是否有交叉 (Alert)
                     let alert = "-";
                     for (let i = 1; i <= 6; i++) {
                         let idx = len - i;
+                        if (idx - 1 < 0) break;
                         if ((ma5[idx] > ma20[idx] && ma5[idx-1] <= ma20[idx-1]) || 
                             (ma5[idx] < ma20[idx] && ma5[idx-1] >= ma20[idx-1])) {
                             alert = "近期有交會";
@@ -144,5 +148,6 @@
             tbody.innerHTML = html;
         }
     </script>
+
 </body>
 </html>
