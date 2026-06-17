@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>股票均線分析工具 (免休眠穩定版)</title>
+    <title>股票均線分析工具 (Vercel 全端版)</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 900px; margin: 20px auto; padding: 0 15px; background-color: #fafafa; }
         .container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -22,8 +22,8 @@
 <body>
 
 <div class="container">
-    <h2>📈 股票 5MA / 20MA 均線交叉查詢 (Vercel 免休眠版)</h2>
-    <p>請輸入美股代號（多個代號請用空格分開，例如：<code>NVDA INTC AAPL TSLA</code>）：</p>
+    <h2>📈 股票 5MA / 20MA 均線交叉查詢 (Vercel 終極免休眠版)</h2>
+    <p>請輸入股票代號（多個代號請用空格分開，例如：<code>NVDA INTC AAPL TSLA 2330</code>）：</p>
     
     <input type="text" id="symbolsInput" value="NVDA INTC AAPL TSLA" placeholder="例如: NVDA INTC AAPL">
     <button onclick="queryStocks()">開始查詢</button>
@@ -50,43 +50,25 @@
 <script>
     async function fetchStockData(symbol) {
         let cleanSymbol = symbol.trim().toUpperCase();
+        if (/^\d+$/.test(cleanSymbol)) {
+            cleanSymbol = cleanSymbol + '.TW';
+        }
         
-        // 使用 Alpha Vantage 官方無跨域限制的資料接口 (CSV 格式)
-        const url = `https://alphavantage.co{cleanSymbol}&apikey=demo&datatype=csv`;
+        // 呼叫自己專案建立的 Vercel Serverless Function 接口
+        const url = `/api/stock?symbol=${cleanSymbol}`;
         
         const response = await fetch(url);
-        if (!response.ok) throw new Error("數據節點連線失敗");
+        const json = await response.json();
         
-        const text = await response.text();
-        const lines = text.split('\n');
+        if (!response.ok) throw new Error(json.error || "數據抓取失敗");
         
-        // 檢查 API 是否回傳錯誤訊息（例如 demo 限制）
-        if (lines.length <= 1 || lines[0].includes("timestamp") === false) {
-            throw new Error("API 流量管制中，請稍等 10 秒後再試一次");
-        }
+        const result = json.chart.result[0];
+        const quotes = result.indicators.quote[0].close;
         
-        let closePrices = [];
+        const validPrices = quotes.filter(p => p !== null && p !== undefined);
+        if (validPrices.length === 0) throw new Error("無可用收盤價數據");
         
-        // 解析 CSV 欄位（標頭為: timestamp,open,high,low,close,volume）
-        // 由於官方 CSV 輸出是由新到舊（今天在最上面），我們必須反過來讀取
-        for (let i = lines.length - 1; i >= 1; i--) {
-            const cols = lines[i].split(',');
-            if (cols.length >= 5) {
-                const closeVal = parseFloat(cols[4]); // 第 4 欄是收盤價 (Close)
-                if (!isNaN(closeVal)) {
-                    closePrices.push(closeVal);
-                }
-            }
-        }
-        
-        if (closePrices.length < 25) throw new Error("歷史數據不足 25 天");
-        
-        // 僅保留最新 90 天
-        if (closePrices.length > 90) {
-            closePrices = closePrices.slice(-90);
-        }
-        
-        return closePrices;
+        return validPrices;
     }
 
     function calculateMA(data, period) {
@@ -111,16 +93,18 @@
         const tbody = document.getElementById("resultsBody");
         
         if (symbols.length === 0) return;
-        tbody.innerHTML = '<tr><td colspan="8">🔄 正在向官方金融資料庫調度數據，請稍候...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">🔄 正在透過 Vercel 後端安全調度數據中...</td></tr>';
         
         let html = "";
 
         for (let symbol of symbols) {
             try {
-                // 每隻股票強制間隔 1.5 秒，避免觸發 API 的頻率保護
-                await new Promise(resolve => setTimeout(resolve, 1500));
-                
                 const closePrices = await fetchStockData(symbol);
+                if (closePrices.length < 25) {
+                    html += `<tr><td><strong>${symbol.toUpperCase()}</strong></td><td colspan="7">歷史數據不足 25 天</td></tr>`;
+                    continue;
+                }
+
                 const ma5 = calculateMA(closePrices, 5);
                 const ma20 = calculateMA(closePrices, 20);
 
