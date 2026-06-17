@@ -3,23 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>股票均線分析工具 (免休眠版)</title>
+    <title>股票均線分析工具 (免休眠穩定版)</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 10px; }
-        input, button { padding: 8px; font-size: 16px; margin-right: 5px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
-        th { background-color: #f4f4f4; }
-        .buy { color: red; font-weight: bold; }
-        .sell { color: green; font-weight: bold; }
+        body { font-family: Arial, sans-serif; max-width: 900px; margin: 20px auto; padding: 0 15px; background-color: #fafafa; }
+        .container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        input, button { padding: 10px; font-size: 16px; border-radius: 4px; border: 1px solid #ccc; }
+        input { width: 60%; margin-right: 10px; }
+        button { background-color: #0070f3; color: white; border: none; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #0051cb; }
+        table { width: 100%; border-collapse: collapse; margin-top: 25px; background: white; }
+        th, td { border: 1px solid #e0e0e0; padding: 12px; text-align: center; }
+        th { background-color: #f7f7f7; font-weight: 600; }
+        .buy { color: #d32f2f; font-weight: bold; background-color: #ffebee; padding: 4px 8px; border-radius: 4px; }
+        .sell { color: #388e3c; font-weight: bold; background-color: #e8f5e9; padding: 4px 8px; border-radius: 4px; }
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; background: #f1f3f4; font-size: 14px; }
     </style>
 </head>
 <body>
 
-    <h2>股票 5MA / 20MA 均線交叉查詢</h2>
-    <p>請輸入股票代號（多個代號請用空格或逗號隔開，例如：<code>2330 2454</code>）：</p>
+<div class="container">
+    <h2>📈 股票 5MA / 20MA 均線交叉查詢 (Vercel 免休眠版)</h2>
+    <p>請輸入美股代號（多個代號請用空格分開，例如：<code>NVDA INTC AAPL TSLA</code>）：</p>
     
-    <input type="text" id="symbolsInput" placeholder="例如: 2330, 2454" style="width: 60%;">
+    <input type="text" id="symbolsInput" value="NVDA INTC AAPL TSLA" placeholder="例如: NVDA INTC AAPL">
     <button onclick="queryStocks()">開始查詢</button>
 
     <table>
@@ -31,45 +37,56 @@
                 <th>昨日 5MA</th>
                 <th>今日 20MA</th>
                 <th>昨日 20MA</th>
-                <th>訊號</th>
-                <th>狀態</th>
+                <th>均線訊號</th>
+                <th>近期狀態</th>
             </tr>
         </thead>
         <tbody id="resultsBody">
-            <tr><td colspan="8">請輸入代號並點擊查詢</td></tr>
+            <tr><td colspan="8">請點擊「開始查詢」按鈕</td></tr>
         </tbody>
     </table>
+</div>
 
-    <script>
+<script>
     async function fetchStockData(symbol) {
         let cleanSymbol = symbol.trim().toUpperCase();
         
-        // 轉換代碼以符合公開免簽 API 規範
-        if (/^\d+$/.test(cleanSymbol)) {
-            cleanSymbol = cleanSymbol + '.TW';
-        }
-
-        // 使用開放的金融代理 API，這是一個無 CORS 限制的官方資料節點
-        const url = `https://allorigins.win{encodeURIComponent('https://yahoo.com' + cleanSymbol + '?range=90d&interval=1d')}`;
+        // 使用 Alpha Vantage 官方無跨域限制的資料接口 (CSV 格式)
+        const url = `https://alphavantage.co{cleanSymbol}&apikey=demo&datatype=csv`;
         
         const response = await fetch(url);
-        if (!response.ok) throw new Error("代理伺服器回應錯誤");
+        if (!response.ok) throw new Error("數據節點連線失敗");
         
-        const wrapperJson = await response.json();
-        const json = JSON.parse(wrapperJson.contents);
+        const text = await response.text();
+        const lines = text.split('\n');
         
-        if (!json.chart || !json.chart.result || json.chart.result === null) {
-            throw new Error("找不到該股票代號");
+        // 檢查 API 是否回傳錯誤訊息（例如 demo 限制）
+        if (lines.length <= 1 || lines[0].includes("timestamp") === false) {
+            throw new Error("API 流量管制中，請稍等 10 秒後再試一次");
         }
         
-        const result = json.chart.result[0];
-        const quotes = result.indicators.quote[0].close;
+        let closePrices = [];
         
-        // 過濾掉無效交易日的空值
-        const validPrices = quotes.filter(p => p !== null && p !== undefined);
-        if (validPrices.length === 0) throw new Error("無可用收盤價數據");
+        // 解析 CSV 欄位（標頭為: timestamp,open,high,low,close,volume）
+        // 由於官方 CSV 輸出是由新到舊（今天在最上面），我們必須反過來讀取
+        for (let i = lines.length - 1; i >= 1; i--) {
+            const cols = lines[i].split(',');
+            if (cols.length >= 5) {
+                const closeVal = parseFloat(cols[4]); // 第 4 欄是收盤價 (Close)
+                if (!isNaN(closeVal)) {
+                    closePrices.push(closeVal);
+                }
+            }
+        }
         
-        return validPrices;
+        if (closePrices.length < 25) throw new Error("歷史數據不足 25 天");
+        
+        // 僅保留最新 90 天
+        if (closePrices.length > 90) {
+            closePrices = closePrices.slice(-90);
+        }
+        
+        return closePrices;
     }
 
     function calculateMA(data, period) {
@@ -94,18 +111,16 @@
         const tbody = document.getElementById("resultsBody");
         
         if (symbols.length === 0) return;
-        tbody.innerHTML = '<tr><td colspan="8">數據下載與均線計算中，請稍候...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">🔄 正在向官方金融資料庫調度數據，請稍候...</td></tr>';
         
         let html = "";
 
         for (let symbol of symbols) {
             try {
+                // 每隻股票強制間隔 1.5 秒，避免觸發 API 的頻率保護
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                
                 const closePrices = await fetchStockData(symbol);
-                if (closePrices.length < 25) {
-                    html += `<tr><td>${symbol}</td><td colspan="7">交易紀錄不足 25 天，無法計算均線</td></tr>`;
-                    continue;
-                }
-
                 const ma5 = calculateMA(closePrices, 5);
                 const ma20 = calculateMA(closePrices, 20);
 
@@ -128,19 +143,17 @@
                 for (let i = 1; i <= 6; i++) {
                     let idx = len - i;
                     if (idx - 1 < 0) break;
-                    if (ma5[idx] !== null && ma5[idx-1] !== null && ma20[idx] !== null && ma20[idx-1] !== null) {
-                        if ((ma5[idx] > ma20[idx] && ma5[idx-1] <= ma20[idx-1]) || 
-                            (ma5[idx] < ma20[idx] && ma5[idx-1] >= ma20[idx-1])) {
-                            alert = "近期有交會";
-                            break;
-                        }
+                    if ((ma5[idx] > ma20[idx] && ma5[idx-1] <= ma20[idx-1]) || 
+                        (ma5[idx] < ma20[idx] && ma5[idx-1] >= ma20[idx-1])) {
+                        alert = '<span class="badge">近期有交會</span>';
+                        break;
                     }
                 }
 
                 html += `
                     <tr>
                         <td><strong>${symbol.toUpperCase()}</strong></td>
-                        <td>${currentPrice}</td>
+                        <td>$${currentPrice}</td>
                         <td>${today_ma5.toFixed(2)}</td>
                         <td>${yesterday_ma5.toFixed(2)}</td>
                         <td>${today_ma20.toFixed(2)}</td>
@@ -150,14 +163,12 @@
                     </tr>
                 `;
             } catch (error) {
-                html += `<tr><td>${symbol}</td><td colspan="7" style="color:red;">錯誤: ${error.message}</td></tr>`;
+                html += `<tr><td><strong>${symbol.toUpperCase()}</strong></td><td colspan="7" style="color:#d32f2f;">⚠️ ${error.message}</td></tr>`;
             }
         }
         tbody.innerHTML = html;
     }
 </script>
-
-
 
 </body>
 </html>
