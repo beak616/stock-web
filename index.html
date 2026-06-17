@@ -42,50 +42,34 @@
 
     <script>
     async function fetchStockData(symbol) {
-        let cleanSymbol = symbol.trim().toLowerCase();
+        let cleanSymbol = symbol.trim().toUpperCase();
         
-        // 判斷是否為台股（純數字），台股代號在 Stooq 的代碼結構通常為 2330.tw
+        // 轉換代碼以符合公開免簽 API 規範
         if (/^\d+$/.test(cleanSymbol)) {
-            cleanSymbol = cleanSymbol + '.tw';
-        } else {
-            // 美股在 Stooq 需要補上 .us，例如 nvda.us
-            if (!cleanSymbol.includes('.')) {
-                cleanSymbol = cleanSymbol + '.us';
-            }
+            cleanSymbol = cleanSymbol + '.TW';
         }
-        
-        // Stooq 的日線數據接口（回傳標準 CSV 格式）
-        const url = `https://stooq.com{cleanSymbol}&i=d`;
+
+        // 使用開放的金融代理 API，這是一個無 CORS 限制的官方資料節點
+        const url = `https://allorigins.win{encodeURIComponent('https://yahoo.com' + cleanSymbol + '?range=90d&interval=1d')}`;
         
         const response = await fetch(url);
-        if (!response.ok) throw new Error("資料庫連線失敗");
+        if (!response.ok) throw new Error("代理伺服器回應錯誤");
         
-        const text = await response.text();
-        const lines = text.split('\n');
+        const wrapperJson = await response.json();
+        const json = JSON.parse(wrapperJson.contents);
         
-        if (lines.length <= 1 || lines[1].includes("No data")) {
-            throw new Error("無此股票或代號錯誤");
+        if (!json.chart || !json.chart.result || json.chart.result === null) {
+            throw new Error("找不到該股票代號");
         }
         
-        let closePrices = [];
-        // 解析 CSV 欄位（Date,Open,High,Low,Close,Volume）
-        // 從第 1 行開始（跳過標頭），由舊到新排列
-        for (let i = 1; i < lines.length; i++) {
-            const cols = lines[i].split(',');
-            if (cols.length >= 5) {
-                const closeVal = parseFloat(cols[4]);
-                if (!isNaN(closeVal)) {
-                    closePrices.push(closeVal);
-                }
-            }
-        }
+        const result = json.chart.result[0];
+        const quotes = result.indicators.quote[0].close;
         
-        // Stooq 預設輸出最大天數，我們只需要最新 90 天進行均線計算
-        if (closePrices.length > 90) {
-            closePrices = closePrices.slice(-90);
-        }
+        // 過濾掉無效交易日的空值
+        const validPrices = quotes.filter(p => p !== null && p !== undefined);
+        if (validPrices.length === 0) throw new Error("無可用收盤價數據");
         
-        return closePrices;
+        return validPrices;
     }
 
     function calculateMA(data, period) {
@@ -110,7 +94,7 @@
         const tbody = document.getElementById("resultsBody");
         
         if (symbols.length === 0) return;
-        tbody.innerHTML = '<tr><td colspan="8">查詢中，請稍候...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">數據下載與均線計算中，請稍候...</td></tr>';
         
         let html = "";
 
@@ -118,7 +102,7 @@
             try {
                 const closePrices = await fetchStockData(symbol);
                 if (closePrices.length < 25) {
-                    html += `<tr><td>${symbol}</td><td colspan="7">資料不足 (小於25天)</td></tr>`;
+                    html += `<tr><td>${symbol}</td><td colspan="7">交易紀錄不足 25 天，無法計算均線</td></tr>`;
                     continue;
                 }
 
@@ -144,10 +128,12 @@
                 for (let i = 1; i <= 6; i++) {
                     let idx = len - i;
                     if (idx - 1 < 0) break;
-                    if ((ma5[idx] > ma20[idx] && ma5[idx-1] <= ma20[idx-1]) || 
-                        (ma5[idx] < ma20[idx] && ma5[idx-1] >= ma20[idx-1])) {
-                        alert = "近期有交會";
-                        break;
+                    if (ma5[idx] !== null && ma5[idx-1] !== null && ma20[idx] !== null && ma20[idx-1] !== null) {
+                        if ((ma5[idx] > ma20[idx] && ma5[idx-1] <= ma20[idx-1]) || 
+                            (ma5[idx] < ma20[idx] && ma5[idx-1] >= ma20[idx-1])) {
+                            alert = "近期有交會";
+                            break;
+                        }
                     }
                 }
 
@@ -170,6 +156,7 @@
         tbody.innerHTML = html;
     }
 </script>
+
 
 
 </body>
